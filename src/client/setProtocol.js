@@ -20,6 +20,7 @@ module.exports = function (client, options) {
 
       client.write('set_protocol', {
         protocolVersion: options.protocolVersion,
+        username: options.username,
         serverHost: taggedHost,
         serverPort: options.port,
         nextState: 2

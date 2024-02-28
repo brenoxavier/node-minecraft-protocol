@@ -15,34 +15,54 @@ const minecraftData = require('minecraft-data')
 const protocols = {}
 
 function createProtocol (state, direction, version, customPackets, compiled = true) {
-  const key = state + ';' + direction + ';' + version + (compiled ? ';c' : '')
-  if (protocols[key]) { return protocols[key] }
-
-  const mcData = minecraftData(version)
   const versionInfo = minecraftData.versionsByMinecraftVersion.pc[version]
-  if (mcData === null) {
+  const key = getProtocolKey(state, direction, version, compiled, versionInfo.usesNetty)
+
+  if (!protocols[key]) {
+    const mcData = minecraftData(version)
+
+    if (mcData != null) {
+      return getProtodefProtocol(key, compiled, mcData, customPackets, state, direction, versionInfo.usesNetty)
+    } else if (versionInfo && versionInfo.version !== mcData.version.version) {
+      throw new Error(`Do not have protocol data for protocol version ${versionInfo.version} (attempted to use ${mcData.version.version} data)`)
+    }
+
     throw new Error(`No data available for version ${version}`)
-  } else if (versionInfo && versionInfo.version !== mcData.version.version) {
-    // The protocol version returned by node-minecraft-data constructor does not match the data in minecraft-data's protocolVersions.json
-    throw new Error(`Do not have protocol data for protocol version ${versionInfo.version} (attempted to use ${mcData.version.version} data)`)
   }
+
+  return protocols[key]
+}
+
+function getProtodefProtocol (key, compiled, mcData, customPackets, state, direction, usesNetty) {
+  const protocol = merge(mcData.protocol, get(customPackets, [mcData.version.majorVersion]))
+  const protocolPath = usesNetty ? [state, direction] : ['stateless', 'directionless']
+  let proto
 
   if (compiled) {
+    const compilerDataTypes = require('../datatypes/compiler-minecraft')
     const compiler = new ProtoDefCompiler()
-    compiler.addTypes(require('../datatypes/compiler-minecraft'))
-    compiler.addProtocol(merge(mcData.protocol, get(customPackets, [mcData.version.majorVersion])), [state, direction])
+    compiler.addTypes(compilerDataTypes)
+    compiler.addProtocol(protocol, protocolPath)
+
     nbt.addTypesToCompiler('big', compiler)
-    const proto = compiler.compileProtoDefSync()
-    protocols[key] = proto
-    return proto
+    proto = compiler.compileProtoDefSync()
+  } else {
+    proto = new ProtoDef(false)
+    proto.addTypes(minecraft)
+    proto.addProtocol(protocol, protocolPath)
+    nbt.addTypesToInterperter('big', proto)
   }
 
-  const proto = new ProtoDef(false)
-  proto.addTypes(minecraft)
-  proto.addProtocol(merge(mcData.protocol, get(customPackets, [mcData.version.majorVersion])), [state, direction])
-  nbt.addTypesToInterperter('big', proto)
   protocols[key] = proto
   return proto
+}
+
+function getProtocolKey (state, direction, version, compiled, usesNetty) {
+  if (usesNetty) {
+    return state + ';' + direction + ';' + version + (compiled ? ';c' : '')
+  }
+
+  return version + (compiled ? ';c' : '')
 }
 
 function createSerializer ({ state = states.HANDSHAKING, isServer = false, version, customPackets, compiled = true } = {}) {
